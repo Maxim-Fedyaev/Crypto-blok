@@ -3,6 +3,8 @@
 #include "csr.h"
 #include "mik32_hal_crypto.h"
 #include "mik32_hal_usart.h"
+#include "mik32_hal_irq.h"
+#include "mik32_hal_timer32.h"
 
 /*
  * Данный пример демонстрирует работу с GPIO и PAD_CONFIG.
@@ -10,7 +12,7 @@
  *
  * Плата выбирается ниже в #define
  */
-#define BLOCK_SIZE 16
+#define BLOCK_SIZE CRYPTO_BLOCK_KUZNECHIK*4
 
 #define PAD_MODE_1 0x01
 #define PAD_MODE_2 0x02
@@ -18,27 +20,69 @@
 
 Crypto_HandleTypeDef hcrypto;
 USART_HandleTypeDef husart0;
+TIMER32_HandleTypeDef htimer32;
 
 void SystemClock_Config();
 void GPIO_Init();
 static void Crypto_Init(void);
 void USART_Init();
+void Decoder (void);
+void Coder (void);
+void TIMER32_Init(void);
+void UART_IRQHandler(void);
 
-uint32_t init_vector[IV_LENGTH_KUZNECHIK_CTR] = {0x12345678, 0x90ABCEF0};
-//uint32_t init_vector[IV_LENGTH_KUZNECHIK_CBC] = {0x12341234, 0x11114444, 0xABCDABCD, 0xAAAABBBB};
+uint32_t flag = 0;
+uint32_t length_input_text = 0;
+
+//uint32_t init_vector[IV_LENGTH_KUZNECHIK_CTR] = {0x12345678, 0x90ABCEF0};
+uint32_t init_vector[IV_LENGTH_KUZNECHIK_CBC] = {0x12341234, 0x11114444, 0xABCDABCD, 0xAAAABBBB};
+
+//uint32_t init_vector[IV_LENGTH_MAGMA_CTR] = {0x12345678};
+//uint32_t init_vector[IV_LENGTH_MAGMA_CBC] = {0x12341234, 0x11114444};
 
 uint32_t crypto_key[CRYPTO_KEY_KUZNECHIK] = {0x8899aabb, 0xccddeeff, 0x00112233, 0x44556677, 0xfedcba98, 0x76543210, 0x01234567, 0x89abcdef};                     
 
-uint8_t input_text[] = { 
-                            "Maksim, u tebja pochti poluchilos" 
-                       };                         
+uint8_t output_text[] = { 
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35
+                        };  
+uint8_t input_text[256] = { 
+                       };                                                
 
 uint32_t key_length = sizeof(crypto_key)/sizeof(*crypto_key);
 
 extern unsigned long __TEXT_START__; // это "метка" для обработчика прерываний
 volatile void trap_handler(void)     // сам обработчик всех прерываний
 {
-    HAL_GPIO_TogglePin(GPIO_0, GPIO_PIN_9);
+
+    if (EPIC_CHECK_GPIO_IRQ())
+    {
+        if (HAL_GPIO_LineInterruptState(GPIO_LINE_7))
+        {
+            HAL_DelayMs(50);
+            HAL_GPIO_TogglePin(GPIO_0, GPIO_PIN_9);
+            flag = !flag;
+        }
+        HAL_GPIO_ClearInterrupts();
+    }
+        if(HAL_EPIC_GetStatus() & HAL_EPIC_UART_1_MASK)
+    {
+        UART_IRQHandler();
+        HAL_EPIC_Clear(HAL_EPIC_UART_1_MASK);
+    }
+    /* Сброс прерываний */
+    HAL_EPIC_Clear(0xFFFFFFFF);
 }
 
 uint8_t get_size_pad(uint64_t size, uint8_t pad_mode)
@@ -164,6 +208,12 @@ void kuznechik_CTR_decode(uint32_t *cipher, uint32_t *expect_cipher, uint32_t pl
 int main()
 {
     write_csr(mtvec, &__TEXT_START__); // операция, настраивающая вектор прерываний
+    
+    __HAL_PCC_EPIC_CLK_ENABLE();
+    HAL_EPIC_MaskEdgeSet(HAL_EPIC_UART_1_MASK); 
+    HAL_EPIC_MaskLevelSet(HAL_EPIC_GPIO_IRQ_MASK);
+
+    HAL_IRQ_EnableInterrupts();
 
     SystemClock_Config();
 
@@ -173,14 +223,71 @@ int main()
 
     GPIO_Init();
 
-    uint8_t uint8plain_text[sizeof(input_text)/sizeof(*input_text) + get_size_pad(sizeof(input_text)/sizeof(*input_text), PAD_MODE_3)];
+    TIMER32_Init();
 
-    set_padding(uint8plain_text, input_text, get_size_pad(sizeof(input_text)/sizeof(*input_text), PAD_MODE_3), sizeof(input_text)/sizeof(*input_text), PAD_MODE_3);
+    // kuznechik_ECB_code();
+    // kuznechik_ECB_decode();
 
-     for (uint32_t i=0; i < sizeof(uint8plain_text)/sizeof(*uint8plain_text); i++)
+    // kuznechik_CBC_code();
+    // kuznechik_CBC_decode();
+
+    // kuznechik_CTR_code(); 
+    // kuznechik_CTR_decode();
+      
+    while (1)
+    {
+        HAL_GPIO_TogglePin(GPIO_0, GPIO_PIN_10);
+        HAL_DelayMs(10000);
+        switch (flag)
+        {
+        case 0:
+            Coder();
+            break;
+        default:
+            Decoder();
+            break;
+        }
+    }
+}
+
+void Decoder (void)
+{
+    for (int i = 0; i < 256; i++) {input_text[i] = 0;}
+    length_input_text = 0;    
+    while (!HAL_USART_IDLE_ReadFlag(&husart0)) {};
+    HAL_USART_IDLE_ClearFlag(&husart0);
+    uint32_t cipher_text_dec[length_input_text/4];
+    for(int i = 0; i < sizeof(cipher_text_dec)/sizeof(*cipher_text_dec); i++)
+    {
+        cipher_text_dec[i] = (input_text[4*i] << 24) + (input_text[4*i+1] << 16) + (input_text[4*i+2] << 8) + input_text[4*i+3];
+    }
+
+    uint32_t expect_cipher_text[sizeof(cipher_text_dec)/sizeof(*cipher_text_dec)];
+
+    kuznechik_ECB_decode(cipher_text_dec, expect_cipher_text, sizeof(cipher_text_dec)/sizeof(*cipher_text_dec));
+
+     for (uint32_t i=0; i < sizeof(expect_cipher_text)/sizeof(*expect_cipher_text); i++)
      {
-         HAL_USART_Transmit(&husart0, uint8plain_text[i], 100);                         
-     }  
+         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>24, 100);
+         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>16, 100);
+         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>8, 100);
+         HAL_USART_Transmit(&husart0, expect_cipher_text[i], 100);                         
+     }
+}
+
+void Coder (void)
+{
+    while (!HAL_USART_IDLE_ReadFlag(&husart0)) {};
+    HAL_USART_IDLE_ClearFlag(&husart0);
+
+    uint8_t uint8plain_text[sizeof(output_text)/sizeof(*output_text) + get_size_pad(sizeof(output_text)/sizeof(*output_text), PAD_MODE_3)];
+
+    set_padding(uint8plain_text, output_text, get_size_pad(sizeof(output_text)/sizeof(*output_text), PAD_MODE_3), sizeof(output_text)/sizeof(*output_text), PAD_MODE_3);
+
+    //for (uint32_t i=0; i < sizeof(uint8plain_text)/sizeof(*uint8plain_text); i++)
+    //{
+    //    HAL_USART_Transmit(&husart0, uint8plain_text[i], 100);                         
+    //}  
 
     uint32_t plain_text[sizeof(uint8plain_text)/sizeof(*uint8plain_text)/4];
 
@@ -191,7 +298,17 @@ int main()
 
     uint32_t cipher_text[sizeof(plain_text)/sizeof(*plain_text)];
 
+    //HAL_TIMER32_VALUE_CLEAR(&htimer32);
+    //HAL_Timer32_Base_Start_IT(&htimer32);
+
     kuznechik_ECB_code(plain_text, cipher_text, sizeof(plain_text)/sizeof(*plain_text));
+
+    //HAL_Timer32_Base_Stop_IT(&htimer32);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>24, 100);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>16, 100);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>8, 100);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE, 100);
+    //HAL_USART_Transmit(&husart0, 0xFF, 100);
 
      for (uint32_t i=0; i < sizeof(plain_text)/sizeof(*plain_text); i++)
      {
@@ -203,49 +320,25 @@ int main()
 
      uint32_t expect_cipher_text[sizeof(cipher_text)/sizeof(*cipher_text)];
 
-    kuznechik_ECB_decode(cipher_text, expect_cipher_text, sizeof(cipher_text)/sizeof(*cipher_text));
-
-     for (uint32_t i=0; i < sizeof(expect_cipher_text)/sizeof(*expect_cipher_text); i++)
-     {
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>24, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>16, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>8, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i], 100);                         
-     }
-
-    /*
-    uint32_t charcipher_text[];
-    HAL_USART_Read(&husart0, charcipher_text, 16, 100000);
-    uint32_t cipher_text[sizeof(charcipher_text)/sizeof(*charcipher_text)];
-    for(int i = 0; i < sizeof(cipher_text)/sizeof(*cipher_text); i++)
-    {
-        cipher_text[i] = (charcipher_text[4*i] << 24) + (charcipher_text[4*i+1] << 16) + (charcipher_text[4*i+2] << 8) + charcipher_text[4*i+3];
-    }
-
-    uint32_t expect_cipher_text[sizeof(cipher_text)/sizeof(*cipher_text)];
+    //HAL_TIMER32_VALUE_CLEAR(&htimer32);
+    //HAL_Timer32_Base_Start_IT(&htimer32);
 
     kuznechik_ECB_decode(cipher_text, expect_cipher_text, sizeof(cipher_text)/sizeof(*cipher_text));
+    
+    //HAL_Timer32_Base_Stop_IT(&htimer32);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>24, 100);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>16, 100);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>8, 100);
+    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE, 100);
 
-     for (uint32_t i=0; i < sizeof(expect_cipher_text)/sizeof(*expect_cipher_text); i++)
-     {
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>24, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>16, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>8, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i], 100);                         
-     }
-*/
-    // kuznechik_CBC_code();
-    // kuznechik_CBC_decode();
+    // for (uint32_t i=0; i < sizeof(expect_cipher_text)/sizeof(*expect_cipher_text); i++)
+    // {
+    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>24, 100);
+    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>16, 100);
+    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>8, 100);
+    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i], 100);                         
+    // }
 
-
-    // kuznechik_CTR_code(); 
-    // kuznechik_CTR_decode();
-      
-    while (1)
-    {
-        HAL_GPIO_TogglePin(GPIO_0, GPIO_PIN_10);
-        HAL_DelayMs(500);
-    }
 }
 
 void SystemClock_Config(void)
@@ -282,6 +375,12 @@ void GPIO_Init()
 
     GPIO_InitStruct.Pin = GPIO_PIN_10;
     HAL_GPIO_Init(GPIO_0, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_15;
+    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_INPUT;
+    HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct); 
+
+    HAL_GPIO_InitInterruptLine(GPIO_MUX_LINE_7_PORT1_15, GPIO_INT_MODE_RISING);  
 }
 
 static void Crypto_Init(void)
@@ -295,7 +394,6 @@ static void Crypto_Init(void)
 
     HAL_Crypto_Init(&hcrypto);
 }
-
 
 void USART_Init()
 {
@@ -326,7 +424,7 @@ void USART_Init()
     husart0.Interrupt.idleie = Disable;
     husart0.Interrupt.lbdie = Disable;
     husart0.Interrupt.peie = Disable;
-    husart0.Interrupt.rxneie = Disable;
+    husart0.Interrupt.rxneie = Enable;
     husart0.Interrupt.tcie = Disable;
     husart0.Interrupt.txeie = Disable;
     husart0.Modem.rts = Disable; //out
@@ -338,4 +436,25 @@ void USART_Init()
     husart0.Modem.ddis = Disable;//out
     husart0.baudrate = 9600;
     HAL_USART_Init(&husart0);
+}
+
+void TIMER32_Init(void)
+{
+    htimer32.Instance = TIMER32_0;
+    htimer32.Top = 0xFFFF;
+    htimer32.State = TIMER32_STATE_DISABLE;
+    htimer32.Clock.Source = TIMER32_SOURCE_PRESCALER;
+    htimer32.Clock.Prescaler = 0;
+    htimer32.InterruptMask = 0;
+    htimer32.CountMode = TIMER32_COUNTMODE_FORWARD;
+    HAL_Timer32_Init(&htimer32);
+}
+
+void UART_IRQHandler() //подпрограмма обработки прерываний от UART
+{
+    /* UART in mode Receiver ---------------------------------------------------*/
+    if((HAL_USART_RXNE_ReadFlag(&husart0) != 0) && ((husart0.Instance->CONTROL1 & (1<<5)) != 0))
+    { 
+        input_text[length_input_text++] = HAL_USART_ReadByte(&husart0);
+    }    
 }
