@@ -5,34 +5,38 @@
 #include "mik32_hal_usart.h"
 #include "mik32_hal_irq.h"
 #include "mik32_hal_timer32.h"
+#include "dma.h"
+#include "main.h"
+#include "mik32_hal_dma.h"
 
-/*
- * Данный пример демонстрирует работу с GPIO и PAD_CONFIG.
- * В примере настраивается вывод, который подключенный к светодиоду, в режим GPIO.
- *
- * Плата выбирается ниже в #define
- */
-#define BLOCK_SIZE CRYPTO_BLOCK_KUZNECHIK*4
+#define BLOCK_SIZE (CRYPTO_BLOCK_KUZNECHIK*4)
 
 #define PAD_MODE_1 0x01
 #define PAD_MODE_2 0x02
 #define PAD_MODE_3 0x03
 
+#define CODER   0
+#define DECODER 1
+
 Crypto_HandleTypeDef hcrypto;
-USART_HandleTypeDef husart0;
-TIMER32_HandleTypeDef htimer32;
+USART_HandleTypeDef husart0 = {0};
+USART_HandleTypeDef husart1 = {0};
+TIMER32_HandleTypeDef htimer32_0;
+// extern DMA_ChannelHandleTypeDef hdma_ch0;
+// extern DMA_ChannelHandleTypeDef hdma_ch1;
+// extern DMA_ChannelHandleTypeDef hdma_ch2;
+// extern DMA_ChannelHandleTypeDef hdma_ch3;
 
-void SystemClock_Config();
-void GPIO_Init();
-static void Crypto_Init(void);
-void USART_Init();
-void Decoder (void);
-void Coder (void);
-void TIMER32_Init(void);
-void UART_IRQHandler(void);
 
-uint32_t flag = 0;
-uint32_t length_input_text = 0;
+static  eMBSndState eSndState = STATE_TX_IDLE;
+static  eMBRcvState eRcvState = STATE_RX_IDLE;
+static  eMBEventType xNeedPoll = EV_READY;
+
+uint8_t  ucRTUBuf[256];
+
+static  uint8_t *pucSndBufferCur;
+static  uint16_t usSndBufferCount = 0;
+static  uint16_t usRcvBufferPos = 0;
 
 //uint32_t init_vector[IV_LENGTH_KUZNECHIK_CTR] = {0x12345678, 0x90ABCEF0};
 uint32_t init_vector[IV_LENGTH_KUZNECHIK_CBC] = {0x12341234, 0x11114444, 0xABCDABCD, 0xAAAABBBB};
@@ -40,45 +44,43 @@ uint32_t init_vector[IV_LENGTH_KUZNECHIK_CBC] = {0x12341234, 0x11114444, 0xABCDA
 //uint32_t init_vector[IV_LENGTH_MAGMA_CTR] = {0x12345678};
 //uint32_t init_vector[IV_LENGTH_MAGMA_CBC] = {0x12341234, 0x11114444};
 
-uint32_t crypto_key[CRYPTO_KEY_KUZNECHIK] = {0x8899aabb, 0xccddeeff, 0x00112233, 0x44556677, 0xfedcba98, 0x76543210, 0x01234567, 0x89abcdef};                     
-
-uint8_t output_text[] = { 
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-                            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35
-                        };  
-uint8_t input_text[256] = { 
-                       };                                                
+uint32_t crypto_key[CRYPTO_KEY_KUZNECHIK] = {0x8899aabb, 0xccddeeff, 0x00112233, 0x44556677, 0xfedcba98, 0x76543210, 0x01234567, 0x89abcdef};                                                              
 
 uint32_t key_length = sizeof(crypto_key)/sizeof(*crypto_key);
+
+void SystemClock_Config(void);
+void GPIO_Init(void);
+void Crypto_Init(void);
+void USART_Init();
+void UART1_IRQHandler(void);
+void UART0_IRQHandler(void);
+void Decoder (void);
+void Coder (void);
+void UART_IRQHandler(void);
+void vMBPortSerialEnable(uint8_t xRxEnable, uint8_t xTxEnable);
+void Timer32_0_IRQHandler(void);
+void TimersEnable(void);
+void TimersDisable(void);
+void TimersInit(uint16_t usTim1Timerout50us);
+void GPIOControlRS485Set ( RS485 State );
+void GPIOControlRS485Init ( void );
 
 extern unsigned long __TEXT_START__; // это "метка" для обработчика прерываний
 volatile void trap_handler(void)     // сам обработчик всех прерываний
 {
-
-    if (EPIC_CHECK_GPIO_IRQ())
+    if(HAL_EPIC_GetStatus() & HAL_EPIC_TIMER32_0_MASK)
     {
-        if (HAL_GPIO_LineInterruptState(GPIO_LINE_7))
-        {
-            HAL_DelayMs(50);
-            HAL_GPIO_TogglePin(GPIO_0, GPIO_PIN_9);
-            flag = !flag;
-        }
-        HAL_GPIO_ClearInterrupts();
+        Timer32_0_IRQHandler();
+        HAL_EPIC_Clear(HAL_EPIC_TIMER32_1_MASK);
     }
-        if(HAL_EPIC_GetStatus() & HAL_EPIC_UART_1_MASK)
+    if(HAL_EPIC_GetStatus() & HAL_EPIC_UART_0_MASK)
     {
-        UART_IRQHandler();
+        UART0_IRQHandler();
+        HAL_EPIC_Clear(HAL_EPIC_UART_0_MASK);
+    }
+    if(HAL_EPIC_GetStatus() & HAL_EPIC_UART_1_MASK)
+    {
+        UART1_IRQHandler();
         HAL_EPIC_Clear(HAL_EPIC_UART_1_MASK);
     }
     /* Сброс прерываний */
@@ -137,208 +139,150 @@ void set_padding(uint8_t *out_buf, uint8_t *in_buf, uint8_t pad_size, uint64_t s
     }
 }
 
-void kuznechik_ECB_code(uint32_t *plain, uint32_t *cipher, uint32_t plain_length)
-{
-    /* Задать режим шифрования */
-    HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_ECB);
-    /* Установка ключа */
-    HAL_Crypto_SetKey(&hcrypto, crypto_key);
-    /* Зашифровать данные */
-    HAL_Crypto_Encode(&hcrypto, plain, cipher, plain_length); 
-}
-
-void kuznechik_ECB_decode(uint32_t *cipher, uint32_t *expect_cipher, uint32_t plain_length)
-{
-    /* Задать режим шифрования */
-    HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_ECB);
-    /* Установка ключа */
-    HAL_Crypto_SetKey(&hcrypto, crypto_key);
-    /* Расшифровать данные */
-    HAL_Crypto_Decode(&hcrypto, cipher, expect_cipher, plain_length); 
-}
-
-void kuznechik_CBC_code(uint32_t *plain, uint32_t *cipher, uint32_t plain_length)
-{
-    /* Задать режим шифрования */
-    HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_CBC);
-    /* Установка вектора инициализации */  
-    HAL_Crypto_SetIV(&hcrypto, init_vector, sizeof(init_vector)/sizeof(*init_vector)); 
-    /* Установка ключа */
-    HAL_Crypto_SetKey(&hcrypto, crypto_key);
-    /* Зашифровать данные */
-    HAL_Crypto_Encode(&hcrypto, plain, cipher, plain_length);     
-}
-
-void kuznechik_CBC_decode(uint32_t *cipher, uint32_t *expect_cipher, uint32_t plain_length)
-{
-    /* Задать режим шифрования */
-    HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_CBC);
-    /* Установка вектора инициализации */  
-    HAL_Crypto_SetIV(&hcrypto, init_vector, sizeof(init_vector)/sizeof(*init_vector)); 
-    /* Установка ключа */
-    HAL_Crypto_SetKey(&hcrypto, crypto_key);
-    /* Расшифровать данные */
-    HAL_Crypto_Decode(&hcrypto, cipher, expect_cipher, plain_length); 
-}
-
-void kuznechik_CTR_code(uint32_t *plain, uint32_t *cipher, uint32_t plain_length)
-{
-    /* Задать режим шифрования */
-    HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_CTR);
-    /* Установка вектора инициализации */  
-    HAL_Crypto_SetIV(&hcrypto, init_vector, sizeof(init_vector)/sizeof(*init_vector)); 
-    /* Установка ключа */
-    HAL_Crypto_SetKey(&hcrypto, crypto_key);
-    /* Зашифровать данные */
-    HAL_Crypto_Encode(&hcrypto, plain, cipher, plain_length); 
-}
-
-void kuznechik_CTR_decode(uint32_t *cipher, uint32_t *expect_cipher, uint32_t plain_length)
-{
-    /* Задать режим шифрования */
-    HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_CTR);
-    /* Установка вектора инициализации */  
-    HAL_Crypto_SetIV(&hcrypto, init_vector, sizeof(init_vector)/sizeof(*init_vector)); 
-    /* Установка ключа */
-    HAL_Crypto_SetKey(&hcrypto, crypto_key);
-    /* Расшифровать данные */
-    HAL_Crypto_Decode(&hcrypto, cipher, expect_cipher, plain_length); 
-}
-
 int main()
 {
     write_csr(mtvec, &__TEXT_START__); // операция, настраивающая вектор прерываний
     
     __HAL_PCC_EPIC_CLK_ENABLE();
-    HAL_EPIC_MaskEdgeSet(HAL_EPIC_UART_1_MASK); 
-    HAL_EPIC_MaskLevelSet(HAL_EPIC_GPIO_IRQ_MASK);
-
+    HAL_EPIC_MaskEdgeSet(HAL_EPIC_UART_0_MASK | HAL_EPIC_TIMER32_0_MASK | HAL_EPIC_UART_1_MASK); 
     HAL_IRQ_EnableInterrupts();
 
+    GPIOControlRS485Init();
+    #if DECODER
+        GPIOControlRS485Set ( RS485_RX ); 
+    #endif
+    #if CODER
+        GPIOControlRS485Set ( RS485_TX ); 
+    #endif
     SystemClock_Config();
-
     Crypto_Init();
-
     USART_Init();
+    TimersInit(35);
 
-    GPIO_Init();
+    vMBPortSerialEnable(1, 0);
 
-    TIMER32_Init();
+    /* Задать режим шифрования */
+    HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_ECB);
+    /* Установка вектора инициализации */  
+    //HAL_Crypto_SetIV(&hcrypto, init_vector, sizeof(init_vector)/sizeof(*init_vector)); 
+    /* Установка ключа */
+    HAL_Crypto_SetKey(&hcrypto, crypto_key);
 
-    // kuznechik_ECB_code();
-    // kuznechik_ECB_decode();
 
-    // kuznechik_CBC_code();
-    // kuznechik_CBC_decode();
 
-    // kuznechik_CTR_code(); 
-    // kuznechik_CTR_decode();
-      
+    //HAL_DMA_Start(&hdma_ch0, (void*)&UART_1->RXDATA, (void*)array1, 15);
+    //HAL_DMA_Start(&hdma_ch1, (void*)&UART_1->RXDATA, (void*)array2, 15);
+    //HAL_DMA_Start(&hdma_ch0, (void*)array1, (void*)&UART_0->RXDATA, 15);
+    //HAL_DMA_Start(&hdma_ch1, (void*)array2, (void*)&UART_0->RXDATA, 15);
+
     while (1)
     {
-        HAL_GPIO_TogglePin(GPIO_0, GPIO_PIN_10);
-        HAL_DelayMs(10000);
-        switch (flag)
-        {
-        case 0:
+
+        #if CODER
             Coder();
-            break;
-        default:
+        #endif
+        #if DECODER
             Decoder();
-            break;
-        }
+        #endif
+
     }
 }
 
 void Decoder (void)
 {
-    for (int i = 0; i < 256; i++) {input_text[i] = 0;}
-    length_input_text = 0;    
-    while (!HAL_USART_IDLE_ReadFlag(&husart0)) {};
-    HAL_USART_IDLE_ClearFlag(&husart0);
-    uint32_t cipher_text_dec[length_input_text/4];
-    for(int i = 0; i < sizeof(cipher_text_dec)/sizeof(*cipher_text_dec); i++)
+    uint8_t cipher_text_dec_length;
+    uint32_t cipher_text_dec[64];
+    uint8_t expect_cipher_text_length; 
+    uint32_t expect_cipher_text[64];
+
+    switch ( xNeedPoll )
     {
-        cipher_text_dec[i] = (input_text[4*i] << 24) + (input_text[4*i+1] << 16) + (input_text[4*i+2] << 8) + input_text[4*i+3];
+    case EV_READY:
+
+        break;
+    case EV_FRAME_RECEIVED:
+        cipher_text_dec_length = usRcvBufferPos/4;
+        expect_cipher_text_length = cipher_text_dec_length;
+        for(int i = 0; i < cipher_text_dec_length; i++)
+            cipher_text_dec[i] = (ucRTUBuf[4*i] << 24) + (ucRTUBuf[4*i+1] << 16) + (ucRTUBuf[4*i+2] << 8) + ucRTUBuf[4*i+3];
+        HAL_Crypto_Decode(&hcrypto, cipher_text_dec, expect_cipher_text, expect_cipher_text_length);
+        if(expect_cipher_text[0] == 0)  
+        {
+            HAL_USART_Print(UART_1, "Ошибка передачи", 50);
+            return;
+        }
+
+        pucSndBufferCur = ( uint8_t * ) ucRTUBuf;
+        usSndBufferCount = 0;
+        for (uint32_t i=0; i < expect_cipher_text_length; i++)
+        {
+            ucRTUBuf[4*i] = (uint8_t)(expect_cipher_text[i] >> 24);
+            ucRTUBuf[4*i + 1] = (uint8_t)(expect_cipher_text[i] >> 16);
+            ucRTUBuf[4*i + 2] = (uint8_t)(expect_cipher_text[i] >> 8);
+            ucRTUBuf[4*i + 3] = (uint8_t)(expect_cipher_text[i]);
+            usSndBufferCount += 4;
+        }
+        while ((ucRTUBuf[usSndBufferCount - 1] == 0x80 && ucRTUBuf[usSndBufferCount] == 0) 
+            || (ucRTUBuf[usSndBufferCount - 1] == 0 && ucRTUBuf[usSndBufferCount] != 0)
+            || (ucRTUBuf[usSndBufferCount - 1] == 0 && ucRTUBuf[usSndBufferCount] == 0)
+            || (ucRTUBuf[usSndBufferCount - 1] == 0x80 && ucRTUBuf[usSndBufferCount] != 0))
+            { usSndBufferCount--; } // Ищем конец массива
+        xNeedPoll = EV_FRAME_SENT;  
+        eSndState = STATE_TX_XMIT;
+        vMBPortSerialEnable( 0, 1 );
+
+        break;
+
+    case EV_FRAME_SENT:
+        break;
     }
-
-    uint32_t expect_cipher_text[sizeof(cipher_text_dec)/sizeof(*cipher_text_dec)];
-
-    kuznechik_ECB_decode(cipher_text_dec, expect_cipher_text, sizeof(cipher_text_dec)/sizeof(*cipher_text_dec));
-
-     for (uint32_t i=0; i < sizeof(expect_cipher_text)/sizeof(*expect_cipher_text); i++)
-     {
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>24, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>16, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>8, 100);
-         HAL_USART_Transmit(&husart0, expect_cipher_text[i], 100);                         
-     }
 }
 
 void Coder (void)
 {
-    while (!HAL_USART_IDLE_ReadFlag(&husart0)) {};
-    HAL_USART_IDLE_ClearFlag(&husart0);
+    uint8_t GetSize;
+    uint8_t uint8plain_text_length;
+    uint8_t uint8plain_text[256];
+    uint8_t plain_text_length;
+    uint32_t plain_text[64];
+    uint32_t cipher_text[64];
 
-    uint8_t uint8plain_text[sizeof(output_text)/sizeof(*output_text) + get_size_pad(sizeof(output_text)/sizeof(*output_text), PAD_MODE_3)];
+    switch ( xNeedPoll )
+    {
+    case EV_READY:
 
-    set_padding(uint8plain_text, output_text, get_size_pad(sizeof(output_text)/sizeof(*output_text), PAD_MODE_3), sizeof(output_text)/sizeof(*output_text), PAD_MODE_3);
+        break;
+    case EV_FRAME_RECEIVED:
 
-    //for (uint32_t i=0; i < sizeof(uint8plain_text)/sizeof(*uint8plain_text); i++)
-    //{
-    //    HAL_USART_Transmit(&husart0, uint8plain_text[i], 100);                         
-    //}  
+        GetSize = get_size_pad(usRcvBufferPos, PAD_MODE_3);
+        uint8plain_text_length = usRcvBufferPos + GetSize;
+        set_padding(uint8plain_text, ucRTUBuf, GetSize, usRcvBufferPos, PAD_MODE_3);
+        plain_text_length = uint8plain_text_length/4;
 
-    uint32_t plain_text[sizeof(uint8plain_text)/sizeof(*uint8plain_text)/4];
+        for (uint32_t i=0; i < uint8plain_text_length/4; i++)
+            plain_text[i] = (uint8plain_text[4*i] << 24) + (uint8plain_text[4*i+1] << 16) + (uint8plain_text[4*i+2] << 8) + uint8plain_text[4*i+3];              
+        HAL_Crypto_Encode(&hcrypto, plain_text, cipher_text, plain_text_length);
 
-    for (uint32_t i=0; i < sizeof(uint8plain_text)/sizeof(*uint8plain_text)/4; i++)
-     {
-         plain_text[i] = (uint8plain_text[4*i] << 24) + (uint8plain_text[4*i+1] << 16) + (uint8plain_text[4*i+2] << 8) + uint8plain_text[4*i+3];              
-     }       
+        pucSndBufferCur = ( uint8_t * ) ucRTUBuf;
+        usSndBufferCount = 0;
+        for (uint32_t i=0; i < plain_text_length; i++)
+        {
+            ucRTUBuf[4*i] = (uint8_t)(cipher_text[i] >> 24);
+            ucRTUBuf[4*i + 1] = (uint8_t)(cipher_text[i] >> 16);
+            ucRTUBuf[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
+            ucRTUBuf[4*i + 3] = (uint8_t)(cipher_text[i]);
+            usSndBufferCount += 4;
+        }
+        xNeedPoll = EV_FRAME_SENT;  
+        eSndState = STATE_TX_XMIT;
+        GPIOControlRS485Set ( RS485_TX ); 
+        vMBPortSerialEnable( 0, 1 );
 
-    uint32_t cipher_text[sizeof(plain_text)/sizeof(*plain_text)];
+        break;
 
-    //HAL_TIMER32_VALUE_CLEAR(&htimer32);
-    //HAL_Timer32_Base_Start_IT(&htimer32);
-
-    kuznechik_ECB_code(plain_text, cipher_text, sizeof(plain_text)/sizeof(*plain_text));
-
-    //HAL_Timer32_Base_Stop_IT(&htimer32);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>24, 100);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>16, 100);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>8, 100);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE, 100);
-    //HAL_USART_Transmit(&husart0, 0xFF, 100);
-
-     for (uint32_t i=0; i < sizeof(plain_text)/sizeof(*plain_text); i++)
-     {
-         HAL_USART_Transmit(&husart0, cipher_text[i]>>24, 100);
-         HAL_USART_Transmit(&husart0, cipher_text[i]>>16, 100);
-         HAL_USART_Transmit(&husart0, cipher_text[i]>>8, 100);
-         HAL_USART_Transmit(&husart0, cipher_text[i], 100);                         
-     }
-
-     uint32_t expect_cipher_text[sizeof(cipher_text)/sizeof(*cipher_text)];
-
-    //HAL_TIMER32_VALUE_CLEAR(&htimer32);
-    //HAL_Timer32_Base_Start_IT(&htimer32);
-
-    kuznechik_ECB_decode(cipher_text, expect_cipher_text, sizeof(cipher_text)/sizeof(*cipher_text));
-    
-    //HAL_Timer32_Base_Stop_IT(&htimer32);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>24, 100);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>16, 100);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE>>8, 100);
-    //HAL_USART_Transmit(&husart0, TIMER32_0->VALUE, 100);
-
-    // for (uint32_t i=0; i < sizeof(expect_cipher_text)/sizeof(*expect_cipher_text); i++)
-    // {
-    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>24, 100);
-    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>16, 100);
-    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i]>>8, 100);
-    //     HAL_USART_Transmit(&husart0, expect_cipher_text[i], 100);                         
-    // }
-
+    case EV_FRAME_SENT:                    
+        break;
+    }
 }
 
 void SystemClock_Config(void)
@@ -359,31 +303,7 @@ void SystemClock_Config(void)
     HAL_PCC_Config(&PCC_OscInit);
 }
 
-void GPIO_Init()
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    __HAL_PCC_GPIO_0_CLK_ENABLE();
-    __HAL_PCC_GPIO_1_CLK_ENABLE();
-    __HAL_PCC_GPIO_2_CLK_ENABLE();
-    __HAL_PCC_GPIO_IRQ_CLK_ENABLE();
-
-    GPIO_InitStruct.Pin = GPIO_PIN_9;
-    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_OUTPUT;
-    GPIO_InitStruct.Pull = HAL_GPIO_PULL_NONE;
-    HAL_GPIO_Init(GPIO_0, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_10;
-    HAL_GPIO_Init(GPIO_0, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_15;
-    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_INPUT;
-    HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct); 
-
-    HAL_GPIO_InitInterruptLine(GPIO_MUX_LINE_7_PORT1_15, GPIO_INT_MODE_RISING);  
-}
-
-static void Crypto_Init(void)
+void Crypto_Init(void)
 {
     hcrypto.Instance = CRYPTO;
 
@@ -395,66 +315,256 @@ static void Crypto_Init(void)
     HAL_Crypto_Init(&hcrypto);
 }
 
-void USART_Init()
+void USART_Init(void)
 {
-    husart0.Instance = UART_1;
+    husart1.Instance = UART_1;
+    #if DECODER
+    husart1.transmitting = Enable;
+    husart1.receiving = Disable;
+    #endif
+    #if CODER
+    husart1.transmitting = Disable;
+    husart1.receiving = Enable;
+    husart1.Interrupt.rxneie = Enable;
+    #endif
+    husart1.frame = Frame_8bit;
+    husart1.baudrate = 9600;
+    HAL_USART_Init(&husart1);
+
+    husart0.Instance = UART_0;
+    #if CODER
     husart0.transmitting = Enable;
+    husart0.receiving = Disable;
+    #endif
+    #if DECODER
+    husart0.transmitting = Disable;
     husart0.receiving = Enable;
-    husart0.frame = Frame_8bit;
-    husart0.parity_bit = Disable;
-    husart0.parity_bit_inversion = Disable;
-    husart0.bit_direction = LSB_First;
-    husart0.data_inversion = Disable;
-    husart0.tx_inversion = Disable;
-    husart0.rx_inversion = Disable;
-    husart0.swap = Disable;
-    husart0.lbm = Disable;
-    husart0.stop_bit = StopBit_1;
-    husart0.mode = Asynchronous_Mode;
-    husart0.xck_mode = XCK_Mode3;
-    husart0.last_byte_clock = Disable;
-    husart0.overwrite = Disable;
-    husart0.rts_mode = AlwaysEnable_mode;
-    husart0.dma_tx_request = Disable;
-    husart0.dma_rx_request = Disable;
-    husart0.channel_mode = Duplex_Mode;
-    husart0.tx_break_mode = Disable;
-    husart0.Interrupt.ctsie = Disable;
-    husart0.Interrupt.eie = Disable;
-    husart0.Interrupt.idleie = Disable;
-    husart0.Interrupt.lbdie = Disable;
-    husart0.Interrupt.peie = Disable;
     husart0.Interrupt.rxneie = Enable;
-    husart0.Interrupt.tcie = Disable;
-    husart0.Interrupt.txeie = Disable;
-    husart0.Modem.rts = Disable; //out
-    husart0.Modem.cts = Disable; //in
-    husart0.Modem.dtr = Disable; //out
-    husart0.Modem.dcd = Disable; //in
-    husart0.Modem.dsr = Disable; //in
-    husart0.Modem.ri = Disable;  //in
-    husart0.Modem.ddis = Disable;//out
+    #endif
+    husart0.frame = Frame_8bit;
     husart0.baudrate = 9600;
     HAL_USART_Init(&husart0);
 }
 
-void TIMER32_Init(void)
+void UART1_IRQHandler(void) //подпрограмма обработки прерываний от UART
 {
-    htimer32.Instance = TIMER32_0;
-    htimer32.Top = 0xFFFF;
-    htimer32.State = TIMER32_STATE_DISABLE;
-    htimer32.Clock.Source = TIMER32_SOURCE_PRESCALER;
-    htimer32.Clock.Prescaler = 0;
-    htimer32.InterruptMask = 0;
-    htimer32.CountMode = TIMER32_COUNTMODE_FORWARD;
-    HAL_Timer32_Init(&htimer32);
+    #if DECODER
+    /* UART in mode Transmitter ------------------------------------------------*/
+    if(((husart1.Instance->FLAGS & UART_FLAGS_TXE_M) ? 1 : 0) && ((husart1.Instance->CONTROL1 & (1<<7)) != 0))
+    {
+        switch ( eSndState )
+        {
+        case STATE_TX_IDLE:
+            vMBPortSerialEnable( 1, 0 );
+            break;
+
+        case STATE_TX_XMIT:
+            if( usSndBufferCount != 0 )
+            {
+                husart1.Instance->TXDATA = (int32_t)*pucSndBufferCur;
+                pucSndBufferCur++;  /* next byte in sendbuffer. */
+                usSndBufferCount--;
+            }
+            else
+            {
+                xNeedPoll = EV_READY;
+                eSndState = STATE_TX_IDLE;
+                vMBPortSerialEnable( 1, 0 );
+                for (size_t i = 0; i < 1000; i++){};
+                GPIOControlRS485Set ( RS485_RX ); 
+            }
+            break;
+        }
+    }
+    #endif    
+    #if CODER
+    /* UART in mode Receiver ---------------------------------------------------*/
+    if(((husart1.Instance->FLAGS & UART_FLAGS_RXNE_M) ? 1 : 0) && ((husart1.Instance->CONTROL1 & (1<<5)) != 0))
+    { 
+        uint8_t           ucByte;
+
+        HAL_TIMER32_VALUE_CLEAR(&htimer32_0);
+        ucByte = husart1.Instance->RXDATA;
+
+        switch ( eRcvState )
+        {
+        case STATE_RX_ERROR:
+            TimersEnable();
+            break;
+
+        case STATE_RX_IDLE:
+            usRcvBufferPos = 0;
+            ucRTUBuf[usRcvBufferPos++] = ucByte;
+            eRcvState = STATE_RX_RCV;
+
+            TimersEnable();
+            break;
+
+        case STATE_RX_RCV:
+            ucRTUBuf[usRcvBufferPos++] = ucByte;
+            TimersEnable();
+            break;
+        }
+    }
+    #endif    
 }
 
-void UART_IRQHandler() //подпрограмма обработки прерываний от UART
+void UART0_IRQHandler(void) //подпрограмма обработки прерываний от UART
 {
+    #if CODER
+    /* UART in mode Transmitter ------------------------------------------------*/
+    if(((husart0.Instance->FLAGS & UART_FLAGS_TXE_M) ? 1 : 0) && ((husart0.Instance->CONTROL1 & (1<<7)) != 0))
+    {
+        switch ( eSndState )
+        {
+        case STATE_TX_IDLE:
+            vMBPortSerialEnable( 1, 0 );
+            break;
+
+        case STATE_TX_XMIT:
+            if( usSndBufferCount != 0 )
+            {
+                husart0.Instance->TXDATA = (int32_t)*pucSndBufferCur;
+                pucSndBufferCur++;  /* next byte in sendbuffer. */
+                usSndBufferCount--;
+            }
+            else
+            {
+                xNeedPoll = EV_READY;
+                eSndState = STATE_TX_IDLE;
+                vMBPortSerialEnable( 1, 0 );
+                for (size_t i = 0; i < 1000; i++){};
+            }
+            break;
+        }
+    }
+    #endif
+    #if DECODER
     /* UART in mode Receiver ---------------------------------------------------*/
-    if((HAL_USART_RXNE_ReadFlag(&husart0) != 0) && ((husart0.Instance->CONTROL1 & (1<<5)) != 0))
+    if(((husart0.Instance->FLAGS & UART_FLAGS_RXNE_M) ? 1 : 0) && ((husart0.Instance->CONTROL1 & (1<<5)) != 0))
     { 
-        input_text[length_input_text++] = HAL_USART_ReadByte(&husart0);
-    }    
+        uint8_t           ucByte;
+
+        HAL_TIMER32_VALUE_CLEAR(&htimer32_0);
+        ucByte = husart0.Instance->RXDATA;
+
+        switch ( eRcvState )
+        {
+        case STATE_RX_ERROR:
+            TimersEnable();
+            break;
+
+        case STATE_RX_IDLE:
+            usRcvBufferPos = 0;
+            ucRTUBuf[usRcvBufferPos++] = ucByte;
+            eRcvState = STATE_RX_RCV;
+
+            TimersEnable();
+            break;
+
+        case STATE_RX_RCV:
+            ucRTUBuf[usRcvBufferPos++] = ucByte;
+            TimersEnable();
+            break;
+        }
+    }  
+    #endif
+}
+
+void GPIOControlRS485Init ( void )
+{ 
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    __HAL_PCC_GPIO_0_CLK_ENABLE();
+    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_OUTPUT;
+    GPIO_InitStruct.Pull = HAL_GPIO_PULL_NONE;
+    HAL_GPIO_Init(GPIO_0, &GPIO_InitStruct);
+        
+    __HAL_PCC_GPIO_1_CLK_ENABLE();
+    GPIO_InitStruct.Pin = GPIO_PIN_14;
+    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_OUTPUT;
+    GPIO_InitStruct.Pull = HAL_GPIO_PULL_NONE;
+    HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct);   
+}
+
+void GPIOControlRS485Set ( RS485 State )
+{ 
+    switch (State)
+    {
+    case RS485_TX:
+        HAL_GPIO_WritePin(GPIO_0, GPIO_PIN_0, GPIO_PIN_HIGH);
+        HAL_GPIO_WritePin(GPIO_1, GPIO_PIN_14, GPIO_PIN_HIGH); 
+        break;
+    case RS485_RX:
+        HAL_GPIO_WritePin(GPIO_0, GPIO_PIN_0, GPIO_PIN_LOW);
+        HAL_GPIO_WritePin(GPIO_1, GPIO_PIN_14, GPIO_PIN_LOW); 
+        break;
+    default:
+        break;
+    }
+}
+
+void Timer32_0_IRQHandler(void)
+{
+    switch ( eRcvState )
+    {
+    case STATE_RX_RCV:
+        xNeedPoll = EV_FRAME_RECEIVED;
+        break;
+
+    default:
+    }
+    eRcvState = STATE_RX_IDLE;
+    TimersDisable();
+    HAL_TIMER32_INTERRUPTFLAGS_CLEAR(&htimer32_0);
+}
+
+void TimersInit(uint16_t usTim1Timerout50us)
+{
+    htimer32_0.Instance = TIMER32_0;
+    htimer32_0.Top = 25*usTim1Timerout50us;
+    htimer32_0.State = TIMER32_STATE_DISABLE;
+    htimer32_0.Clock.Source = TIMER32_SOURCE_PRESCALER;
+    htimer32_0.Clock.Prescaler = 63;
+    htimer32_0.InterruptMask = 0;
+    htimer32_0.CountMode = TIMER32_COUNTMODE_FORWARD;
+    HAL_Timer32_Init(&htimer32_0);
+}
+
+void TimersEnable(void)
+{
+    HAL_TIMER32_VALUE_CLEAR(&htimer32_0);
+    HAL_Timer32_InterruptMask_Set(&htimer32_0, TIMER32_INT_OVERFLOW_M);
+    HAL_Timer32_Start(&htimer32_0);
+}
+
+void TimersDisable(void)
+{
+    HAL_Timer32_InterruptMask_Clear(&htimer32_0, TIMER32_INT_OVERFLOW_M);
+    HAL_Timer32_Stop(&htimer32_0);
+}
+
+void vMBPortSerialEnable(uint8_t xRxEnable, uint8_t xTxEnable)
+{
+    #if DECODER
+    if (xRxEnable)
+        HAL_USART_RXNE_EnableInterrupt(&husart0);
+    else
+        HAL_USART_RXNE_DisableInterrupt(&husart0);
+    if (xTxEnable)
+        HAL_USART_TXE_EnableInterrupt(&husart1);
+    else
+        HAL_USART_TXE_DisableInterrupt(&husart1);
+    #endif
+    #if CODER
+    if (xRxEnable)
+        HAL_USART_RXNE_EnableInterrupt(&husart1);
+    else
+        HAL_USART_RXNE_DisableInterrupt(&husart1);
+    if (xTxEnable)
+        HAL_USART_TXE_EnableInterrupt(&husart0);
+    else
+        HAL_USART_TXE_DisableInterrupt(&husart0);
+    #endif
 }
