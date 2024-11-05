@@ -1,10 +1,20 @@
 #include "mik32_hal_dma.h"
+#include "mik32_hal_usart.h"
 
 DMA_InitTypeDef hdma;
 DMA_ChannelHandleTypeDef hdma_ch0;
 DMA_ChannelHandleTypeDef hdma_ch1;
 DMA_ChannelHandleTypeDef hdma_ch2;
 DMA_ChannelHandleTypeDef hdma_ch3;
+
+extern uint8_t array0[16];
+extern uint8_t array1[16];
+extern uint8_t array2[16];
+extern uint8_t array3[16];
+extern uint8_t array0_flag = 0;
+extern uint8_t array1_flag = 0;
+extern uint8_t array2_flag = 0;
+extern uint8_t array3_flag = 0;
 
 static void DMA_CH0_Init(DMA_InitTypeDef *hdma)
 {
@@ -110,4 +120,41 @@ void DMA_Init(void)
     DMA_CH1_Init(&hdma);
     DMA_CH2_Init(&hdma);
     DMA_CH3_Init(&hdma);
+    HAL_DMA_LocalIRQEnable(&hdma_ch0, DMA_IRQ_ENABLE);
+    HAL_DMA_LocalIRQEnable(&hdma_ch1, DMA_IRQ_ENABLE);
+    HAL_DMA_LocalIRQEnable(&hdma_ch2, DMA_IRQ_ENABLE);
+    HAL_DMA_LocalIRQEnable(&hdma_ch3, DMA_IRQ_ENABLE);    
 }
+
+void DMA_IRQHandler(void)
+{
+    if (HAL_DMA_GetChannelIrq(&hdma_ch0))
+    {
+        HAL_DMA_ChannelDisable(&hdma_ch0);
+        HAL_DMA_Start(&hdma_ch1, (void*)&UART_1->RXDATA, (void*)array1, 15);
+        array1_flag = 1;
+    }
+    if (HAL_DMA_GetChannelIrq(&hdma_ch1))
+    {
+        HAL_DMA_ChannelDisable(&hdma_ch1);
+        HAL_DMA_Start(&hdma_ch0, (void*)&UART_1->RXDATA, (void*)array0, 15);
+        array0_flag = 1;
+    }
+    if (HAL_DMA_GetChannelIrq(&hdma_ch2))
+    {
+        HAL_DMA_ChannelDisable(&hdma_ch2);
+        HAL_DMA_Start(&hdma_ch3, (void*)array3, (void*)&UART_0->RXDATA, 15);
+        array3_flag = 1;
+    }
+    if (HAL_DMA_GetChannelIrq(&hdma_ch3))
+    {
+        HAL_DMA_ChannelDisable(&hdma_ch3);
+        HAL_DMA_Start(&hdma_ch2, (void*)array2, (void*)&UART_0->RXDATA, 15);
+        array2_flag = 1;
+    }
+    HAL_DMA_ClearLocalIrq(&hdma);
+}
+
+
+
+

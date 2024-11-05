@@ -22,11 +22,19 @@ Crypto_HandleTypeDef hcrypto;
 USART_HandleTypeDef husart0 = {0};
 USART_HandleTypeDef husart1 = {0};
 TIMER32_HandleTypeDef htimer32_0;
-// extern DMA_ChannelHandleTypeDef hdma_ch0;
-// extern DMA_ChannelHandleTypeDef hdma_ch1;
-// extern DMA_ChannelHandleTypeDef hdma_ch2;
-// extern DMA_ChannelHandleTypeDef hdma_ch3;
+extern DMA_ChannelHandleTypeDef hdma_ch0;
+extern DMA_ChannelHandleTypeDef hdma_ch1;
+extern DMA_ChannelHandleTypeDef hdma_ch2;
+extern DMA_ChannelHandleTypeDef hdma_ch3;
 
+uint8_t array0[16];
+uint8_t array1[16];
+uint8_t array2[16];
+uint8_t array3[16];
+uint8_t array0_flag = 0;
+uint8_t array1_flag = 0;
+uint8_t array2_flag = 0;
+uint8_t array3_flag = 0;
 
 static  eMBSndState eSndState = STATE_TX_IDLE;
 static  eMBRcvState eRcvState = STATE_RX_IDLE;
@@ -73,16 +81,12 @@ volatile void trap_handler(void)     // сам обработчик всех п�
         Timer32_0_IRQHandler();
         HAL_EPIC_Clear(HAL_EPIC_TIMER32_1_MASK);
     }
-    if(HAL_EPIC_GetStatus() & HAL_EPIC_UART_0_MASK)
+    if(HAL_EPIC_GetStatus() & HAL_EPIC_DMA_MASK)
     {
-        UART0_IRQHandler();
-        HAL_EPIC_Clear(HAL_EPIC_UART_0_MASK);
+        DMA_IRQHandler();
+        HAL_EPIC_Clear(HAL_EPIC_DMA_MASK);
     }
-    if(HAL_EPIC_GetStatus() & HAL_EPIC_UART_1_MASK)
-    {
-        UART1_IRQHandler();
-        HAL_EPIC_Clear(HAL_EPIC_UART_1_MASK);
-    }
+    
     /* Сброс прерываний */
     HAL_EPIC_Clear(0xFFFFFFFF);
 }
@@ -158,6 +162,7 @@ int main()
     Crypto_Init();
     USART_Init();
     TimersInit(35);
+    DMA_Init();
 
     vMBPortSerialEnable(1, 0);
 
@@ -168,12 +173,7 @@ int main()
     /* Установка ключа */
     HAL_Crypto_SetKey(&hcrypto, crypto_key);
 
-
-
-    //HAL_DMA_Start(&hdma_ch0, (void*)&UART_1->RXDATA, (void*)array1, 15);
-    //HAL_DMA_Start(&hdma_ch1, (void*)&UART_1->RXDATA, (void*)array2, 15);
-    //HAL_DMA_Start(&hdma_ch0, (void*)array1, (void*)&UART_0->RXDATA, 15);
-    //HAL_DMA_Start(&hdma_ch1, (void*)array2, (void*)&UART_0->RXDATA, 15);
+    HAL_DMA_Start(&hdma_ch0, (void*)&UART_1->RXDATA, (void*)array0, 15);
 
     while (1)
     {
@@ -242,24 +242,22 @@ void Coder (void)
 {
     uint8_t GetSize;
     uint8_t uint8plain_text_length;
-    uint8_t uint8plain_text[256];
+    uint8_t uint8plain_text[16];
     uint8_t plain_text_length;
-    uint32_t plain_text[64];
-    uint32_t cipher_text[64];
+    uint32_t plain_text[4];
+    uint32_t cipher_text[4];
 
-    switch ( xNeedPoll )
+    while (array0_flag == 0 || array1_flag == 0) {};
+    if (array0_flag)
     {
-    case EV_READY:
-
-        break;
-    case EV_FRAME_RECEIVED:
-
-        GetSize = get_size_pad(usRcvBufferPos, PAD_MODE_3);
-        uint8plain_text_length = usRcvBufferPos + GetSize;
-        set_padding(uint8plain_text, ucRTUBuf, GetSize, usRcvBufferPos, PAD_MODE_3);
-        plain_text_length = uint8plain_text_length/4;
-
-        for (uint32_t i=0; i < uint8plain_text_length/4; i++)
+        while ()
+        {
+            uint8plain_text[i]
+        }
+        
+        
+    }
+        for (uint32_t i=0; i < 4; i++)
             plain_text[i] = (uint8plain_text[4*i] << 24) + (uint8plain_text[4*i+1] << 16) + (uint8plain_text[4*i+2] << 8) + uint8plain_text[4*i+3];              
         HAL_Crypto_Encode(&hcrypto, plain_text, cipher_text, plain_text_length);
 
@@ -272,16 +270,8 @@ void Coder (void)
             ucRTUBuf[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
             ucRTUBuf[4*i + 3] = (uint8_t)(cipher_text[i]);
             usSndBufferCount += 4;
-        }
-        xNeedPoll = EV_FRAME_SENT;  
-        eSndState = STATE_TX_XMIT;
-        GPIOControlRS485Set ( RS485_TX ); 
-        vMBPortSerialEnable( 0, 1 );
+    }
 
-        break;
-
-    case EV_FRAME_SENT:                    
-        break;
     }
 }
 
