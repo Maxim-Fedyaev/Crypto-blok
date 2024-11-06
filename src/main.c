@@ -7,6 +7,7 @@
 #include "mik32_hal_timer32.h"
 #include "dma.h"
 #include "main.h"
+#include "mik32_hal_dma.h"
 
 #define BLOCK_SIZE (CRYPTO_BLOCK_KUZNECHIK*4)
 
@@ -21,6 +22,10 @@ Crypto_HandleTypeDef hcrypto;
 USART_HandleTypeDef husart0 = {0};
 USART_HandleTypeDef husart1 = {0};
 TIMER32_HandleTypeDef htimer32_0;
+extern DMA_ChannelHandleTypeDef hdma_ch0;
+extern DMA_ChannelHandleTypeDef hdma_ch1;
+extern DMA_ChannelHandleTypeDef hdma_ch2;
+extern DMA_ChannelHandleTypeDef hdma_ch3;
 
 uint8_t array0[16];
 uint8_t array1[16];
@@ -76,7 +81,7 @@ volatile void trap_handler(void)     // сам обработчик всех п�
         Timer32_0_IRQHandler();
         HAL_EPIC_Clear(HAL_EPIC_TIMER32_1_MASK);
     }
-    if(HAL_EPIC_GetStatus() & HAL_EPIC_DMA_MASK)
+    if(EPIC_CHECK_DMA())
     {
         DMA_IRQHandler();
         HAL_EPIC_Clear(HAL_EPIC_DMA_MASK);
@@ -143,8 +148,6 @@ int main()
     write_csr(mtvec, &__TEXT_START__); // операция, настраивающая вектор прерываний
     
     __HAL_PCC_EPIC_CLK_ENABLE();
-    HAL_EPIC_MaskEdgeSet(HAL_EPIC_DMA_MASK | HAL_EPIC_TIMER32_0_MASK); 
-    HAL_IRQ_EnableInterrupts();
 
     GPIOControlRS485Init();
     #if DECODER
@@ -156,8 +159,11 @@ int main()
     SystemClock_Config();
     Crypto_Init();
     USART_Init();
-    TimersInit(35);
+    //TimersInit(35);
     DMA_Init();
+
+    HAL_EPIC_MaskEdgeSet(HAL_EPIC_TIMER32_0_MASK); 
+    HAL_IRQ_EnableInterrupts();
 
     /* Задать режим шифрования */
     HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_ECB);
@@ -166,7 +172,7 @@ int main()
     /* Установка ключа */
     HAL_Crypto_SetKey(&hcrypto, crypto_key);
 
-    DMA_Channel_Start(0);
+    HAL_DMA_Start(&hdma_ch0, (void *)&husart1.Instance->RXDATA, (void *)&array0, 15);
 
     while (1)
     {
@@ -230,26 +236,39 @@ int main()
 //         break;
 //     }
 // }
-
+uint8_t DMA_num = 0;
 void Coder (void)
 {
     uint32_t plain_text[4];
     uint32_t cipher_text[4];
 
-    while (array0_full == 0 && array1_full == 0) {};
-    if (array0_full)
-    {
-        for (size_t i = 0; i < 4; i++)
-            plain_text[i] = (array0[4*i] << 24) + (array0[4*i+1] << 16) + (array0[4*i+2] << 8) + array0[4*i+3];  
-    }
-    if (array1_full)
-    {
-        for (size_t i = 0; i < 4; i++)
-            plain_text[i] = (array1[4*i] << 24) + (array1[4*i+1] << 16) + (array1[4*i+2] << 8) + array1[4*i+3];  
-    }
+    while (!HAL_USART_RXNE_ReadFlag(&husart1)) {};
+    
+    HAL_DMA_Wait(&hdma_ch0, 1000000);
+    // if (array0_full)
+    // {
+    for (size_t i = 0; i < 4; i++)
+        plain_text[i] = (array0[4*i] << 24) + (array0[4*i+1] << 16) + (array0[4*i+2] << 8) + array0[4*i+3];
+    // if(DMA_num == 0)
+    // {
+    //     HAL_DMA_ChannelDisable(&hdma_ch0);
+    //     HAL_DMA_Start(&hdma_ch1, (void *)&husart1.Instance->RXDATA, (void *)&array1, 15);
+    //     DMA_num = 1;
+    // }
+    // else
+    // {
+    //     HAL_DMA_Start(&hdma_ch0, (void *)&husart1.Instance->RXDATA, (void *)&array0, 15);
+    //     DMA_num = 0;
+    // }  
+    // }
+    // if (array1_full)
+    // {
+    //     for (size_t i = 0; i < 4; i++)
+    //         plain_text[i] = (array1[4*i] << 24) + (array1[4*i+1] << 16) + (array1[4*i+2] << 8) + array1[4*i+3];  
+    // }
     HAL_Crypto_Encode(&hcrypto, plain_text, cipher_text, 4);
-    if (array2_empty)
-    {
+    // if (array2_empty)
+    // {
         for (uint32_t i = 0; i < 4; i++)
         {
             array2[4*i] = (uint8_t)(cipher_text[i] >> 24);
@@ -257,19 +276,19 @@ void Coder (void)
             array2[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
             array2[4*i + 3] = (uint8_t)(cipher_text[i]);
         }
-        DMA_Channel_Start(2);
-    }
-    if (array3_empty)
-    {
-        for (uint32_t i = 0; i < 4; i++)
-        {
-            array3[4*i] = (uint8_t)(cipher_text[i] >> 24);
-            array3[4*i + 1] = (uint8_t)(cipher_text[i] >> 16);
-            array3[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
-            array3[4*i + 3] = (uint8_t)(cipher_text[i]);
-        }
-        DMA_Channel_Start(3);
-    }
+            HAL_DMA_Start(&hdma_ch2, (void *)&array2, (void *)&husart0.Instance->TXDATA, 15);
+    // }
+    // if (array3_empty)
+    // {
+    //     for (uint32_t i = 0; i < 4; i++)
+    //     {
+    //         array3[4*i] = (uint8_t)(cipher_text[i] >> 24);
+    //         array3[4*i + 1] = (uint8_t)(cipher_text[i] >> 16);
+    //         array3[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
+    //         array3[4*i + 3] = (uint8_t)(cipher_text[i]);
+    //     }
+    //         HAL_DMA_Start(&hdma_ch3, (void *)&array3, (void *)&husart0.Instance->TXDATA, 15);
+    // }
 }
 
 void SystemClock_Config(void)

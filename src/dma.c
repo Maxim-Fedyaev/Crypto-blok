@@ -1,9 +1,6 @@
 #include "mik32_hal_dma.h"
 #include "mik32_hal_usart.h"
 
-static uint32_t CFGWriteBuffer[4] = {0}; 
-static uint32_t ConfigStatusWriteBuffer = 0;
-
 extern uint8_t array0[16];
 extern uint8_t array1[16];
 extern uint8_t array2[16];
@@ -13,177 +10,160 @@ extern uint8_t array1_full;
 extern uint8_t array2_empty;
 extern uint8_t array3_empty;
 
-static void DMA_CH0_Init(void)
+DMA_InitTypeDef hdma = {0};
+DMA_ChannelHandleTypeDef hdma_ch0 = {0};
+DMA_ChannelHandleTypeDef hdma_ch1 = {0};
+DMA_ChannelHandleTypeDef hdma_ch2 = {0};
+DMA_ChannelHandleTypeDef hdma_ch3 = {0};
+extern USART_HandleTypeDef husart0;
+extern USART_HandleTypeDef husart1;
+
+
+static void DMA_CH0_Init(DMA_InitTypeDef *hdma)
 {
-    DMA_CONFIG->CHANNELS[0].SRC = (uint32_t)&(UART_1->RXDATA);
-    DMA_CONFIG->CHANNELS[0].DST = (uint32_t)&array0;
-    DMA_CONFIG->CHANNELS[0].LEN = 15;
+    hdma_ch0.dma = hdma;
 
-    CFGWriteBuffer[0] |= 0 // DMA_CH_CFG_ENABLE_M 
-        | (DMA_CHANNEL_PRIORITY_VERY_HIGH << DMA_CH_CFG_PRIOR_S) 
-        | (DMA_CHANNEL_MODE_PERIPHERY << DMA_CH_CFG_READ_MODE_S) 
-        | (DMA_CHANNEL_INC_DISABLE << DMA_CH_CFG_READ_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_READ_SIZE_S) 
-        | (4 << DMA_CH_CFG_READ_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_1_REQUEST << DMA_CH_CFG_READ_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_DISABLE << DMA_CH_CFG_READ_ACK_EN_S) 
-        | (DMA_CHANNEL_MODE_MEMORY << DMA_CH_CFG_WRITE_MODE_S) 
-        | (DMA_CHANNEL_INC_ENABLE << DMA_CH_CFG_WRITE_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_WRITE_SIZE_S) 
-        | (4 << DMA_CH_CFG_WRITE_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_1_REQUEST << DMA_CH_CFG_WRITE_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_ENABLE << DMA_CH_CFG_WRITE_ACK_EN_S)
-        | (DMA_IRQ_ENABLE << DMA_CH_CFG_IRQ_EN_S);
+    /* Настройки канала */
+    hdma_ch0.ChannelInit.Channel = DMA_CHANNEL_0;
+    hdma_ch0.ChannelInit.Priority = DMA_CHANNEL_PRIORITY_VERY_HIGH;
 
-    DMA_CONFIG->CHANNELS[0].CFG = CFGWriteBuffer[0];
+    hdma_ch0.ChannelInit.ReadMode = DMA_CHANNEL_MODE_PERIPHERY;
+    hdma_ch0.ChannelInit.ReadInc = DMA_CHANNEL_INC_DISABLE;
+    hdma_ch0.ChannelInit.ReadSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно read_size */
+    hdma_ch0.ChannelInit.ReadBurstSize = 0;                /* read_burst_size должно быть кратно read_size */
+    hdma_ch0.ChannelInit.ReadRequest = DMA_CHANNEL_USART_1_REQUEST;
+    hdma_ch0.ChannelInit.ReadAck = DMA_CHANNEL_ACK_DISABLE;
+
+    hdma_ch0.ChannelInit.WriteMode = DMA_CHANNEL_MODE_MEMORY;
+    hdma_ch0.ChannelInit.WriteInc = DMA_CHANNEL_INC_ENABLE;
+    hdma_ch0.ChannelInit.WriteSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно write_size */
+    hdma_ch0.ChannelInit.WriteBurstSize = 0;                /* write_burst_size должно быть кратно read_size */
+    hdma_ch0.ChannelInit.WriteRequest = DMA_CHANNEL_USART_1_REQUEST;
+    hdma_ch0.ChannelInit.WriteAck = DMA_CHANNEL_ACK_ENABLE;
+
+    //HAL_DMA_LocalIRQEnable(&hdma_ch0, DMA_IRQ_ENABLE);
 }
 
-static void DMA_CH1_Init(void)
+static void DMA_CH1_Init(DMA_InitTypeDef *hdma)
 {
-    DMA_CONFIG->CHANNELS[1].SRC = (uint32_t)&(UART_1->RXDATA);
-    DMA_CONFIG->CHANNELS[1].DST = (uint32_t)&array1;
-    DMA_CONFIG->CHANNELS[1].LEN = 15;
+    hdma_ch0.dma = hdma;
 
-    CFGWriteBuffer[1] |= 0 // DMA_CH_CFG_ENABLE_M 
-        | (DMA_CHANNEL_PRIORITY_VERY_HIGH << DMA_CH_CFG_PRIOR_S) 
-        | (DMA_CHANNEL_MODE_PERIPHERY << DMA_CH_CFG_READ_MODE_S) 
-        | (DMA_CHANNEL_INC_DISABLE << DMA_CH_CFG_READ_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_READ_SIZE_S) 
-        | (4 << DMA_CH_CFG_READ_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_1_REQUEST << DMA_CH_CFG_READ_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_DISABLE << DMA_CH_CFG_READ_ACK_EN_S) 
-        | (DMA_CHANNEL_MODE_MEMORY << DMA_CH_CFG_WRITE_MODE_S) 
-        | (DMA_CHANNEL_INC_ENABLE << DMA_CH_CFG_WRITE_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_WRITE_SIZE_S) 
-        | (4 << DMA_CH_CFG_WRITE_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_1_REQUEST << DMA_CH_CFG_WRITE_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_ENABLE << DMA_CH_CFG_WRITE_ACK_EN_S)
-        | (DMA_IRQ_ENABLE << DMA_CH_CFG_IRQ_EN_S);
+    /* Настройки канала */
+    hdma_ch1.ChannelInit.Channel = DMA_CHANNEL_1;
+    hdma_ch1.ChannelInit.Priority = DMA_CHANNEL_PRIORITY_VERY_HIGH;
 
-    DMA_CONFIG->CHANNELS[1].CFG = CFGWriteBuffer[1];
+    hdma_ch1.ChannelInit.ReadMode = DMA_CHANNEL_MODE_PERIPHERY;
+    hdma_ch1.ChannelInit.ReadInc = DMA_CHANNEL_INC_DISABLE;
+    hdma_ch1.ChannelInit.ReadSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно read_size */
+    hdma_ch1.ChannelInit.ReadBurstSize = 0;                /* read_burst_size должно быть кратно read_size */
+    hdma_ch1.ChannelInit.ReadRequest = DMA_CHANNEL_USART_1_REQUEST;
+    hdma_ch1.ChannelInit.ReadAck = DMA_CHANNEL_ACK_DISABLE;
+
+    hdma_ch1.ChannelInit.WriteMode = DMA_CHANNEL_MODE_MEMORY;
+    hdma_ch1.ChannelInit.WriteInc = DMA_CHANNEL_INC_ENABLE;
+    hdma_ch1.ChannelInit.WriteSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно write_size */
+    hdma_ch1.ChannelInit.WriteBurstSize = 0;                /* write_burst_size должно быть кратно read_size */
+    hdma_ch1.ChannelInit.WriteRequest = DMA_CHANNEL_USART_1_REQUEST;
+    hdma_ch1.ChannelInit.WriteAck = DMA_CHANNEL_ACK_ENABLE;
+
+    //HAL_DMA_LocalIRQEnable(&hdma_ch1, DMA_IRQ_ENABLE);
 }
 
-static void DMA_CH2_Init(void)
+static void DMA_CH2_Init(DMA_InitTypeDef *hdma)
 {
-    DMA_CONFIG->CHANNELS[2].SRC = (uint32_t)&array2;
-    DMA_CONFIG->CHANNELS[2].DST = (uint32_t)&(UART_0->TXDATA);
-    DMA_CONFIG->CHANNELS[2].LEN = 15;
+    hdma_ch0.dma = hdma;
 
-    CFGWriteBuffer[2] |= 0 // DMA_CH_CFG_ENABLE_M 
-        | (DMA_CHANNEL_PRIORITY_VERY_HIGH << DMA_CH_CFG_PRIOR_S) 
-        | (DMA_CHANNEL_MODE_MEMORY << DMA_CH_CFG_READ_MODE_S) 
-        | (DMA_CHANNEL_INC_ENABLE << DMA_CH_CFG_READ_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_READ_SIZE_S) 
-        | (4 << DMA_CH_CFG_READ_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_0_REQUEST << DMA_CH_CFG_READ_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_ENABLE << DMA_CH_CFG_READ_ACK_EN_S) 
-        | (DMA_CHANNEL_MODE_PERIPHERY << DMA_CH_CFG_WRITE_MODE_S) 
-        | (DMA_CHANNEL_INC_DISABLE << DMA_CH_CFG_WRITE_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_WRITE_SIZE_S) 
-        | (4 << DMA_CH_CFG_WRITE_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_0_REQUEST << DMA_CH_CFG_WRITE_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_DISABLE << DMA_CH_CFG_WRITE_ACK_EN_S)
-        | (DMA_IRQ_ENABLE << DMA_CH_CFG_IRQ_EN_S);
+    /* Настройки канала */
+    hdma_ch2.ChannelInit.Channel = DMA_CHANNEL_2;
+    hdma_ch2.ChannelInit.Priority = DMA_CHANNEL_PRIORITY_VERY_HIGH;
 
-    DMA_CONFIG->CHANNELS[2].CFG = CFGWriteBuffer[2];
+    hdma_ch2.ChannelInit.ReadMode = DMA_CHANNEL_MODE_MEMORY;
+    hdma_ch2.ChannelInit.ReadInc = DMA_CHANNEL_INC_ENABLE;
+    hdma_ch2.ChannelInit.ReadSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно read_size */
+    hdma_ch2.ChannelInit.ReadBurstSize = 0;                /* read_burst_size должно быть кратно read_size */
+    hdma_ch2.ChannelInit.ReadRequest = DMA_CHANNEL_USART_0_REQUEST;
+    hdma_ch2.ChannelInit.ReadAck = DMA_CHANNEL_ACK_ENABLE;
+
+    hdma_ch2.ChannelInit.WriteMode = DMA_CHANNEL_MODE_PERIPHERY;
+    hdma_ch2.ChannelInit.WriteInc = DMA_CHANNEL_INC_DISABLE;
+    hdma_ch2.ChannelInit.WriteSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно write_size */
+    hdma_ch2.ChannelInit.WriteBurstSize = 0;                /* write_burst_size должно быть кратно read_size */
+    hdma_ch2.ChannelInit.WriteRequest = DMA_CHANNEL_USART_0_REQUEST;
+    hdma_ch2.ChannelInit.WriteAck = DMA_CHANNEL_ACK_DISABLE;
+
+    //HAL_DMA_LocalIRQEnable(&hdma_ch2, DMA_IRQ_ENABLE);
 }
 
-static void DMA_CH3_Init(void)
+static void DMA_CH3_Init(DMA_InitTypeDef *hdma)
 {
-    DMA_CONFIG->CHANNELS[3].SRC = (uint32_t)&array3;
-    DMA_CONFIG->CHANNELS[3].DST = (uint32_t)&(UART_0->TXDATA);
-    DMA_CONFIG->CHANNELS[3].LEN = 15;
+    hdma_ch0.dma = hdma;
 
-    CFGWriteBuffer[3] |= 0 // DMA_CH_CFG_ENABLE_M 
-        | (DMA_CHANNEL_PRIORITY_VERY_HIGH << DMA_CH_CFG_PRIOR_S) 
-        | (DMA_CHANNEL_MODE_MEMORY << DMA_CH_CFG_READ_MODE_S) 
-        | (DMA_CHANNEL_INC_ENABLE << DMA_CH_CFG_READ_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_READ_SIZE_S) 
-        | (4 << DMA_CH_CFG_READ_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_0_REQUEST << DMA_CH_CFG_READ_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_ENABLE << DMA_CH_CFG_READ_ACK_EN_S) 
-        | (DMA_CHANNEL_MODE_PERIPHERY << DMA_CH_CFG_WRITE_MODE_S) 
-        | (DMA_CHANNEL_INC_DISABLE << DMA_CH_CFG_WRITE_INCREMENT_S) 
-        | (DMA_CHANNEL_SIZE_BYTE << DMA_CH_CFG_WRITE_SIZE_S) 
-        | (4 << DMA_CH_CFG_WRITE_BURST_SIZE_S) 
-        | (DMA_CHANNEL_USART_0_REQUEST << DMA_CH_CFG_WRITE_REQUEST_S) 
-        | (DMA_CHANNEL_ACK_DISABLE << DMA_CH_CFG_WRITE_ACK_EN_S)
-        | (DMA_IRQ_ENABLE << DMA_CH_CFG_IRQ_EN_S);
+    /* Настройки канала */
+    hdma_ch3.ChannelInit.Channel = DMA_CHANNEL_3;
+    hdma_ch3.ChannelInit.Priority = DMA_CHANNEL_PRIORITY_VERY_HIGH;
 
-    DMA_CONFIG->CHANNELS[3].CFG = CFGWriteBuffer[3];
-}
+    hdma_ch3.ChannelInit.ReadMode = DMA_CHANNEL_MODE_MEMORY;
+    hdma_ch3.ChannelInit.ReadInc = DMA_CHANNEL_INC_ENABLE;
+    hdma_ch3.ChannelInit.ReadSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно read_size */
+    hdma_ch3.ChannelInit.ReadBurstSize = 0;                /* read_burst_size должно быть кратно read_size */
+    hdma_ch3.ChannelInit.ReadRequest = DMA_CHANNEL_USART_0_REQUEST;
+    hdma_ch3.ChannelInit.ReadAck = DMA_CHANNEL_ACK_ENABLE;
 
-void DMA_ClearLocalIrq(void)
-{
-    ConfigStatusWriteBuffer &= ~(DMA_CONFIG_CLEAR_LOCAL_IRQ_M | DMA_CONFIG_CLEAR_GLOBAL_IRQ_M | DMA_CONFIG_CLEAR_ERROR_IRQ_M);
-    ConfigStatusWriteBuffer |= DMA_CONFIG_CLEAR_LOCAL_IRQ_M;
-    DMA_CONFIG->CONFIG_STATUS = ConfigStatusWriteBuffer;
-    ConfigStatusWriteBuffer &= ~(DMA_CONFIG_CLEAR_LOCAL_IRQ_M | DMA_CONFIG_CLEAR_GLOBAL_IRQ_M | DMA_CONFIG_CLEAR_ERROR_IRQ_M);
+    hdma_ch3.ChannelInit.WriteMode = DMA_CHANNEL_MODE_PERIPHERY;
+    hdma_ch3.ChannelInit.WriteInc = DMA_CHANNEL_INC_DISABLE;
+    hdma_ch3.ChannelInit.WriteSize = DMA_CHANNEL_SIZE_BYTE; /* data_len должно быть кратно write_size */
+    hdma_ch3.ChannelInit.WriteBurstSize = 0;                /* write_burst_size должно быть кратно read_size */
+    hdma_ch3.ChannelInit.WriteRequest = DMA_CHANNEL_USART_0_REQUEST;
+    hdma_ch3.ChannelInit.WriteAck = DMA_CHANNEL_ACK_DISABLE;
+
+    //HAL_DMA_LocalIRQEnable(&hdma_ch3, DMA_IRQ_ENABLE);
 }
 
 void DMA_Init(void)
 {
-    __HAL_PCC_DMA_CLK_ENABLE();
+    /* Настройки DMA */
+    hdma.Instance = DMA_CONFIG;
+    hdma.CurrentValue = DMA_CURRENT_VALUE_ENABLE;
 
-    ConfigStatusWriteBuffer = 0;
+    HAL_DMA_Init(&hdma);
 
-    DMA_ClearLocalIrq();
-
-    ConfigStatusWriteBuffer &= ~DMA_CONFIG_CURRENT_VALUE_M;
-    ConfigStatusWriteBuffer |= DMA_CURRENT_VALUE_ENABLE <<  DMA_CONFIG_CURRENT_VALUE_S;
-    DMA_CONFIG->CONFIG_STATUS = ConfigStatusWriteBuffer;
+    // /* Настройка глобального прерывания DMA */
+    // HAL_DMA_GlobalIRQEnable(&hdma, DMA_IRQ_ENABLE);
+    // /* Настройка прерывания DMA при возникновении ошибки */
+    // HAL_DMA_ErrorIRQEnable(&hdma, DMA_IRQ_ENABLE);
 
     /* Инициализация канала */
-    // DMA_CH0_Init();
-    // DMA_CH1_Init();
-    // DMA_CH2_Init();
-    DMA_CH3_Init();
-}
-
-void DMA_Channel_Start(uint8_t ChannelIndex)
-{
-    CFGWriteBuffer[ChannelIndex] |= DMA_CH_CFG_ENABLE_M;
-    DMA_CONFIG->CHANNELS[ChannelIndex].CFG = CFGWriteBuffer[ChannelIndex];
-}
-
-void DMA_Channel_Stop(uint8_t ChannelIndex)
-{
-    CFGWriteBuffer[ChannelIndex] &= ~DMA_CH_CFG_ENABLE_M;
-    DMA_CONFIG->CHANNELS[ChannelIndex].CFG = CFGWriteBuffer[ChannelIndex];
-}
-
-int DMA_GetChannelIrq(uint8_t ChannelIndex)
-{
-    uint32_t ChannelIrq = (DMA_CONFIG->CONFIG_STATUS) & ((1 << ChannelIndex) << DMA_STATUS_CHANNEL_IRQ_S);
-    ChannelIrq = ( ChannelIrq >> DMA_STATUS_CHANNEL_IRQ_S ) >> ChannelIndex;
-    return ChannelIrq;
+    DMA_CH0_Init(&hdma);
+    DMA_CH1_Init(&hdma);
+    DMA_CH2_Init(&hdma);
+    DMA_CH3_Init(&hdma);
 }
 
 void DMA_IRQHandler(void)
 {
-    if (DMA_GetChannelIrq(0))
+    if (HAL_DMA_GetChannelIrq(&hdma_ch0))
     {
-        DMA_Channel_Stop(0);
-        DMA_Channel_Start(1);
+        HAL_DMA_ChannelDisable(&hdma_ch0);
+        HAL_DMA_Start(&hdma_ch1, (void *)&husart1.Instance->RXDATA, (void *)&array1, 15);
         array1_full = 1;
     }
-    if (DMA_GetChannelIrq(1))
+    if (HAL_DMA_GetChannelIrq(&hdma_ch1))
     {
-        DMA_Channel_Stop(1);
-        DMA_Channel_Start(0);
+        HAL_DMA_ChannelDisable(&hdma_ch1);
+        HAL_DMA_Start(&hdma_ch0, (void *)&husart1.Instance->RXDATA, (void *)&array0, 15);
         array0_full = 1;
     }
-    if (DMA_GetChannelIrq(2))
+    if (HAL_DMA_GetChannelIrq(&hdma_ch2))
     {
-        DMA_Channel_Stop(2);
+        HAL_DMA_ChannelDisable(&hdma_ch2);
         array3_empty = 1;
     }
-    if (DMA_GetChannelIrq(3))
+    if (HAL_DMA_GetChannelIrq(&hdma_ch3))
     {
-        DMA_Channel_Stop(3);
+        HAL_DMA_ChannelDisable(&hdma_ch3);
         array2_empty = 1;
     }
-    DMA_ClearLocalIrq();
+    HAL_DMA_ClearLocalIrq(&hdma);
 }
 
 
