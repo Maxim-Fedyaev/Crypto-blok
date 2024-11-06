@@ -7,7 +7,6 @@
 #include "mik32_hal_timer32.h"
 #include "dma.h"
 #include "main.h"
-#include "mik32_hal_dma.h"
 
 #define BLOCK_SIZE (CRYPTO_BLOCK_KUZNECHIK*4)
 
@@ -15,26 +14,22 @@
 #define PAD_MODE_2 0x02
 #define PAD_MODE_3 0x03
 
-#define CODER   0
-#define DECODER 1
+#define CODER   1
+#define DECODER 0
 
 Crypto_HandleTypeDef hcrypto;
 USART_HandleTypeDef husart0 = {0};
 USART_HandleTypeDef husart1 = {0};
 TIMER32_HandleTypeDef htimer32_0;
-extern DMA_ChannelHandleTypeDef hdma_ch0;
-extern DMA_ChannelHandleTypeDef hdma_ch1;
-extern DMA_ChannelHandleTypeDef hdma_ch2;
-extern DMA_ChannelHandleTypeDef hdma_ch3;
 
 uint8_t array0[16];
 uint8_t array1[16];
 uint8_t array2[16];
 uint8_t array3[16];
-uint8_t array0_flag = 0;
-uint8_t array1_flag = 0;
-uint8_t array2_flag = 0;
-uint8_t array3_flag = 0;
+uint8_t array0_full = 0;
+uint8_t array1_full = 0;
+uint8_t array2_empty = 0;
+uint8_t array3_empty = 0;
 
 static  eMBSndState eSndState = STATE_TX_IDLE;
 static  eMBRcvState eRcvState = STATE_RX_IDLE;
@@ -148,7 +143,7 @@ int main()
     write_csr(mtvec, &__TEXT_START__); // операция, настраивающая вектор прерываний
     
     __HAL_PCC_EPIC_CLK_ENABLE();
-    HAL_EPIC_MaskEdgeSet(HAL_EPIC_UART_0_MASK | HAL_EPIC_TIMER32_0_MASK | HAL_EPIC_UART_1_MASK); 
+    HAL_EPIC_MaskEdgeSet(HAL_EPIC_DMA_MASK | HAL_EPIC_TIMER32_0_MASK); 
     HAL_IRQ_EnableInterrupts();
 
     GPIOControlRS485Init();
@@ -164,8 +159,6 @@ int main()
     TimersInit(35);
     DMA_Init();
 
-    vMBPortSerialEnable(1, 0);
-
     /* Задать режим шифрования */
     HAL_Crypto_SetCipherMode(&hcrypto, CRYPTO_CIPHER_MODE_ECB);
     /* Установка вектора инициализации */  
@@ -173,7 +166,7 @@ int main()
     /* Установка ключа */
     HAL_Crypto_SetKey(&hcrypto, crypto_key);
 
-    HAL_DMA_Start(&hdma_ch0, (void*)&UART_1->RXDATA, (void*)array0, 15);
+    DMA_Channel_Start(0);
 
     while (1)
     {
@@ -188,90 +181,94 @@ int main()
     }
 }
 
-void Decoder (void)
-{
-    uint8_t cipher_text_dec_length;
-    uint32_t cipher_text_dec[64];
-    uint8_t expect_cipher_text_length; 
-    uint32_t expect_cipher_text[64];
+// void Decoder (void)
+// {
+//     uint8_t cipher_text_dec_length;
+//     uint32_t cipher_text_dec[64];
+//     uint8_t expect_cipher_text_length; 
+//     uint32_t expect_cipher_text[64];
 
-    switch ( xNeedPoll )
-    {
-    case EV_READY:
+//     switch ( xNeedPoll )
+//     {
+//     case EV_READY:
 
-        break;
-    case EV_FRAME_RECEIVED:
-        cipher_text_dec_length = usRcvBufferPos/4;
-        expect_cipher_text_length = cipher_text_dec_length;
-        for(int i = 0; i < cipher_text_dec_length; i++)
-            cipher_text_dec[i] = (ucRTUBuf[4*i] << 24) + (ucRTUBuf[4*i+1] << 16) + (ucRTUBuf[4*i+2] << 8) + ucRTUBuf[4*i+3];
-        HAL_Crypto_Decode(&hcrypto, cipher_text_dec, expect_cipher_text, expect_cipher_text_length);
-        if(expect_cipher_text[0] == 0)  
-        {
-            HAL_USART_Print(UART_1, "Ошибка передачи", 50);
-            return;
-        }
+//         break;
+//     case EV_FRAME_RECEIVED:
+//         cipher_text_dec_length = usRcvBufferPos/4;
+//         expect_cipher_text_length = cipher_text_dec_length;
+//         for(int i = 0; i < cipher_text_dec_length; i++)
+//             cipher_text_dec[i] = (ucRTUBuf[4*i] << 24) + (ucRTUBuf[4*i+1] << 16) + (ucRTUBuf[4*i+2] << 8) + ucRTUBuf[4*i+3];
+//         HAL_Crypto_Decode(&hcrypto, cipher_text_dec, expect_cipher_text, expect_cipher_text_length);
+//         if(expect_cipher_text[0] == 0)  
+//         {
+//             HAL_USART_Print(UART_1, "Ошибка передачи", 50);
+//             return;
+//         }
 
-        pucSndBufferCur = ( uint8_t * ) ucRTUBuf;
-        usSndBufferCount = 0;
-        for (uint32_t i=0; i < expect_cipher_text_length; i++)
-        {
-            ucRTUBuf[4*i] = (uint8_t)(expect_cipher_text[i] >> 24);
-            ucRTUBuf[4*i + 1] = (uint8_t)(expect_cipher_text[i] >> 16);
-            ucRTUBuf[4*i + 2] = (uint8_t)(expect_cipher_text[i] >> 8);
-            ucRTUBuf[4*i + 3] = (uint8_t)(expect_cipher_text[i]);
-            usSndBufferCount += 4;
-        }
-        while ((ucRTUBuf[usSndBufferCount - 1] == 0x80 && ucRTUBuf[usSndBufferCount] == 0) 
-            || (ucRTUBuf[usSndBufferCount - 1] == 0 && ucRTUBuf[usSndBufferCount] != 0)
-            || (ucRTUBuf[usSndBufferCount - 1] == 0 && ucRTUBuf[usSndBufferCount] == 0)
-            || (ucRTUBuf[usSndBufferCount - 1] == 0x80 && ucRTUBuf[usSndBufferCount] != 0))
-            { usSndBufferCount--; } // Ищем конец массива
-        xNeedPoll = EV_FRAME_SENT;  
-        eSndState = STATE_TX_XMIT;
-        vMBPortSerialEnable( 0, 1 );
+//         pucSndBufferCur = ( uint8_t * ) ucRTUBuf;
+//         usSndBufferCount = 0;
+//         for (uint32_t i=0; i < expect_cipher_text_length; i++)
+//         {
+//             ucRTUBuf[4*i] = (uint8_t)(expect_cipher_text[i] >> 24);
+//             ucRTUBuf[4*i + 1] = (uint8_t)(expect_cipher_text[i] >> 16);
+//             ucRTUBuf[4*i + 2] = (uint8_t)(expect_cipher_text[i] >> 8);
+//             ucRTUBuf[4*i + 3] = (uint8_t)(expect_cipher_text[i]);
+//             usSndBufferCount += 4;
+//         }
+//         while ((ucRTUBuf[usSndBufferCount - 1] == 0x80 && ucRTUBuf[usSndBufferCount] == 0) 
+//             || (ucRTUBuf[usSndBufferCount - 1] == 0 && ucRTUBuf[usSndBufferCount] != 0)
+//             || (ucRTUBuf[usSndBufferCount - 1] == 0 && ucRTUBuf[usSndBufferCount] == 0)
+//             || (ucRTUBuf[usSndBufferCount - 1] == 0x80 && ucRTUBuf[usSndBufferCount] != 0))
+//             { usSndBufferCount--; } // Ищем конец массива
+//         xNeedPoll = EV_FRAME_SENT;  
+//         eSndState = STATE_TX_XMIT;
+//         vMBPortSerialEnable( 0, 1 );
 
-        break;
+//         break;
 
-    case EV_FRAME_SENT:
-        break;
-    }
-}
+//     case EV_FRAME_SENT:
+//         break;
+//     }
+// }
 
 void Coder (void)
 {
-    uint8_t GetSize;
-    uint8_t uint8plain_text_length;
-    uint8_t uint8plain_text[16];
-    uint8_t plain_text_length;
     uint32_t plain_text[4];
     uint32_t cipher_text[4];
 
-    while (array0_flag == 0 || array1_flag == 0) {};
-    if (array0_flag)
+    while (array0_full == 0 && array1_full == 0) {};
+    if (array0_full)
     {
-        while ()
+        for (size_t i = 0; i < 4; i++)
+            plain_text[i] = (array0[4*i] << 24) + (array0[4*i+1] << 16) + (array0[4*i+2] << 8) + array0[4*i+3];  
+    }
+    if (array1_full)
+    {
+        for (size_t i = 0; i < 4; i++)
+            plain_text[i] = (array1[4*i] << 24) + (array1[4*i+1] << 16) + (array1[4*i+2] << 8) + array1[4*i+3];  
+    }
+    HAL_Crypto_Encode(&hcrypto, plain_text, cipher_text, 4);
+    if (array2_empty)
+    {
+        for (uint32_t i = 0; i < 4; i++)
         {
-            uint8plain_text[i]
+            array2[4*i] = (uint8_t)(cipher_text[i] >> 24);
+            array2[4*i + 1] = (uint8_t)(cipher_text[i] >> 16);
+            array2[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
+            array2[4*i + 3] = (uint8_t)(cipher_text[i]);
         }
-        
-        
+        DMA_Channel_Start(2);
     }
-        for (uint32_t i=0; i < 4; i++)
-            plain_text[i] = (uint8plain_text[4*i] << 24) + (uint8plain_text[4*i+1] << 16) + (uint8plain_text[4*i+2] << 8) + uint8plain_text[4*i+3];              
-        HAL_Crypto_Encode(&hcrypto, plain_text, cipher_text, plain_text_length);
-
-        pucSndBufferCur = ( uint8_t * ) ucRTUBuf;
-        usSndBufferCount = 0;
-        for (uint32_t i=0; i < plain_text_length; i++)
+    if (array3_empty)
+    {
+        for (uint32_t i = 0; i < 4; i++)
         {
-            ucRTUBuf[4*i] = (uint8_t)(cipher_text[i] >> 24);
-            ucRTUBuf[4*i + 1] = (uint8_t)(cipher_text[i] >> 16);
-            ucRTUBuf[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
-            ucRTUBuf[4*i + 3] = (uint8_t)(cipher_text[i]);
-            usSndBufferCount += 4;
-    }
-
+            array3[4*i] = (uint8_t)(cipher_text[i] >> 24);
+            array3[4*i + 1] = (uint8_t)(cipher_text[i] >> 16);
+            array3[4*i + 2] = (uint8_t)(cipher_text[i] >> 8);
+            array3[4*i + 3] = (uint8_t)(cipher_text[i]);
+        }
+        DMA_Channel_Start(3);
     }
 }
 
@@ -311,11 +308,14 @@ void USART_Init(void)
     #if DECODER
     husart1.transmitting = Enable;
     husart1.receiving = Disable;
+    husart1.dma_tx_request = Enable;
+    husart1.dma_rx_request = Disable;
     #endif
     #if CODER
     husart1.transmitting = Disable;
     husart1.receiving = Enable;
-    husart1.Interrupt.rxneie = Enable;
+    husart1.dma_tx_request = Disable;
+    husart1.dma_rx_request = Enable;
     #endif
     husart1.frame = Frame_8bit;
     husart1.baudrate = 9600;
@@ -325,11 +325,14 @@ void USART_Init(void)
     #if CODER
     husart0.transmitting = Enable;
     husart0.receiving = Disable;
+    husart0.dma_tx_request = Enable;
+    husart0.dma_rx_request = Disable;
     #endif
     #if DECODER
     husart0.transmitting = Disable;
     husart0.receiving = Enable;
-    husart0.Interrupt.rxneie = Enable;
+    husart0.dma_tx_request = Disable;
+    husart0.dma_rx_request = Enable;
     #endif
     husart0.frame = Frame_8bit;
     husart0.baudrate = 9600;
