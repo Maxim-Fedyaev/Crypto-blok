@@ -5,9 +5,7 @@
 #include "mik32_hal_usart.h"
 #include "mik32_hal_irq.h"
 #include "mik32_hal_timer32.h"
-#include "dma.h"
 #include "main.h"
-#include "mik32_hal_dma.h"
 
 #define BLOCK_SIZE (CRYPTO_BLOCK_KUZNECHIK*4)
 
@@ -18,15 +16,12 @@
 #define CODER   0
 #define DECODER 1
 
+#define BAUDRATE 57600
+
 Crypto_HandleTypeDef hcrypto;
 USART_HandleTypeDef husart0 = {0};
 USART_HandleTypeDef husart1 = {0};
 TIMER32_HandleTypeDef htimer32_0;
-// extern DMA_ChannelHandleTypeDef hdma_ch0;
-// extern DMA_ChannelHandleTypeDef hdma_ch1;
-// extern DMA_ChannelHandleTypeDef hdma_ch2;
-// extern DMA_ChannelHandleTypeDef hdma_ch3;
-
 
 static  eMBSndState eSndState = STATE_TX_IDLE;
 static  eMBRcvState eRcvState = STATE_RX_IDLE;
@@ -61,7 +56,7 @@ void vMBPortSerialEnable(uint8_t xRxEnable, uint8_t xTxEnable);
 void Timer32_0_IRQHandler(void);
 void TimersEnable(void);
 void TimersDisable(void);
-void TimersInit(uint16_t usTim1Timerout50us);
+void TimersInit(void);
 void GPIOControlRS485Set ( RS485 State );
 void GPIOControlRS485Init ( void );
 
@@ -157,7 +152,7 @@ int main()
     SystemClock_Config();
     Crypto_Init();
     USART_Init();
-    TimersInit(35);
+    TimersInit();
 
     vMBPortSerialEnable(1, 0);
 
@@ -167,13 +162,6 @@ int main()
     //HAL_Crypto_SetIV(&hcrypto, init_vector, sizeof(init_vector)/sizeof(*init_vector)); 
     /* Установка ключа */
     HAL_Crypto_SetKey(&hcrypto, crypto_key);
-
-
-
-    //HAL_DMA_Start(&hdma_ch0, (void*)&UART_1->RXDATA, (void*)array1, 15);
-    //HAL_DMA_Start(&hdma_ch1, (void*)&UART_1->RXDATA, (void*)array2, 15);
-    //HAL_DMA_Start(&hdma_ch0, (void*)array1, (void*)&UART_0->RXDATA, 15);
-    //HAL_DMA_Start(&hdma_ch1, (void*)array2, (void*)&UART_0->RXDATA, 15);
 
     while (1)
     {
@@ -206,7 +194,7 @@ void Decoder (void)
         for(int i = 0; i < cipher_text_dec_length; i++)
             cipher_text_dec[i] = (ucRTUBuf[4*i] << 24) + (ucRTUBuf[4*i+1] << 16) + (ucRTUBuf[4*i+2] << 8) + ucRTUBuf[4*i+3];
         HAL_Crypto_Decode(&hcrypto, cipher_text_dec, expect_cipher_text, expect_cipher_text_length);
-        if(expect_cipher_text[0] == 0)  
+        if(((expect_cipher_text_length % 4) != 0) || expect_cipher_text_length == 0) 
         {
             HAL_USART_Print(UART_1, "Ошибка передачи", 50);
             return;
@@ -328,7 +316,7 @@ void USART_Init(void)
     husart1.Interrupt.rxneie = Enable;
     #endif
     husart1.frame = Frame_8bit;
-    husart1.baudrate = 9600;
+    husart1.baudrate = BAUDRATE;
     HAL_USART_Init(&husart1);
 
     husart0.Instance = UART_0;
@@ -342,7 +330,7 @@ void USART_Init(void)
     husart0.Interrupt.rxneie = Enable;
     #endif
     husart0.frame = Frame_8bit;
-    husart0.baudrate = 9600;
+    husart0.baudrate = BAUDRATE;
     HAL_USART_Init(&husart0);
 }
 
@@ -370,7 +358,7 @@ void UART1_IRQHandler(void) //подпрограмма обработки пре
                 xNeedPoll = EV_READY;
                 eSndState = STATE_TX_IDLE;
                 vMBPortSerialEnable( 1, 0 );
-                for (size_t i = 0; i < 1000; i++){};
+                while (!HAL_USART_TXC_ReadFlag(&husart1)) {};
                 GPIOControlRS485Set ( RS485_RX ); 
             }
             break;
@@ -520,13 +508,13 @@ void Timer32_0_IRQHandler(void)
     HAL_TIMER32_INTERRUPTFLAGS_CLEAR(&htimer32_0);
 }
 
-void TimersInit(uint16_t usTim1Timerout50us)
+void TimersInit(void)
 {
     htimer32_0.Instance = TIMER32_0;
-    htimer32_0.Top = 25*usTim1Timerout50us;
+    htimer32_0.Top = 30000000/BAUDRATE;
     htimer32_0.State = TIMER32_STATE_DISABLE;
     htimer32_0.Clock.Source = TIMER32_SOURCE_PRESCALER;
-    htimer32_0.Clock.Prescaler = 63;
+    htimer32_0.Clock.Prescaler = 31;
     htimer32_0.InterruptMask = 0;
     htimer32_0.CountMode = TIMER32_COUNTMODE_FORWARD;
     HAL_Timer32_Init(&htimer32_0);
