@@ -41,7 +41,7 @@ static void DMA_CH0_Init(DMA_InitTypeDef *hdma)
     hdma_ch0.ChannelInit.WriteRequest = DMA_CHANNEL_USART_1_REQUEST;
     hdma_ch0.ChannelInit.WriteAck = DMA_CHANNEL_ACK_ENABLE;
 
-    //HAL_DMA_LocalIRQEnable(&hdma_ch0, DMA_IRQ_ENABLE);
+    HAL_DMA_LocalIRQEnable(&hdma_ch0, DMA_IRQ_ENABLE);
 }
 
 static void DMA_CH1_Init(DMA_InitTypeDef *hdma)
@@ -66,7 +66,7 @@ static void DMA_CH1_Init(DMA_InitTypeDef *hdma)
     hdma_ch1.ChannelInit.WriteRequest = DMA_CHANNEL_USART_1_REQUEST;
     hdma_ch1.ChannelInit.WriteAck = DMA_CHANNEL_ACK_ENABLE;
 
-    //HAL_DMA_LocalIRQEnable(&hdma_ch1, DMA_IRQ_ENABLE);
+    HAL_DMA_LocalIRQEnable(&hdma_ch1, DMA_IRQ_ENABLE);
 }
 
 static void DMA_CH2_Init(DMA_InitTypeDef *hdma)
@@ -91,7 +91,7 @@ static void DMA_CH2_Init(DMA_InitTypeDef *hdma)
     hdma_ch2.ChannelInit.WriteRequest = DMA_CHANNEL_USART_0_REQUEST;
     hdma_ch2.ChannelInit.WriteAck = DMA_CHANNEL_ACK_DISABLE;
 
-    //HAL_DMA_LocalIRQEnable(&hdma_ch2, DMA_IRQ_ENABLE);
+    HAL_DMA_LocalIRQEnable(&hdma_ch2, DMA_IRQ_ENABLE);
 }
 
 static void DMA_CH3_Init(DMA_InitTypeDef *hdma)
@@ -116,7 +116,7 @@ static void DMA_CH3_Init(DMA_InitTypeDef *hdma)
     hdma_ch3.ChannelInit.WriteRequest = DMA_CHANNEL_USART_0_REQUEST;
     hdma_ch3.ChannelInit.WriteAck = DMA_CHANNEL_ACK_DISABLE;
 
-    //HAL_DMA_LocalIRQEnable(&hdma_ch3, DMA_IRQ_ENABLE);
+    HAL_DMA_LocalIRQEnable(&hdma_ch3, DMA_IRQ_ENABLE);
 }
 
 void DMA_Init(void)
